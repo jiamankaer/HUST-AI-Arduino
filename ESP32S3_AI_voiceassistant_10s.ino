@@ -43,7 +43,7 @@ i2s_slot_mode_t slot = I2S_SLOT_MODE_MONO;
 
 // MIC recording buffer
 static const uint32_t sample_buffer_size = 320000;
-static signed short sampleBuffer[sample_buffer_size];
+signed short* sampleBuffer = NULL;
 
 // STT JSON
 char *data_json;
@@ -187,6 +187,10 @@ void setup(){
     delay(1000);
 
     pinMode(key, INPUT_PULLUP);
+    sampleBuffer = (signed short*)ps_malloc(320000 * sizeof(signed short));
+    if (!sampleBuffer || !esp_ptr_external_ram(sampleBuffer)) {
+        Serial.println("分配PSRAM失败!");
+    }
 
     setup_mic_pins();
 
