@@ -101,22 +101,41 @@ class LaptopRelay:
         return None
     
     def convert_to_arduino_format(self, cmd_data):
-        """将ESP32的JSON指令转换为Arduino格式"""
+        """将ESP32的JSON指令转换为Arduino期望的JSON格式"""
         cmd_type = cmd_data.get("cmd", "control")
         device = cmd_data.get("dev", "")
         action = cmd_data.get("act", "")
+        params = cmd_data.get("params", {})
         
-        # 简单格式转换，可根据实际Arduino代码调整
+        arduino_json = {
+            "device": device
+        }
+        
+        # 根据命令类型处理
         if cmd_type == "control":
-            return f"CTRL|{device}|{action}"
-        elif cmd_type == "query":
-            return f"QUERY|{device}"
-        elif cmd_type == "config":
-            params = cmd_data.get("params", {})
-            if "brightness" in params:
-                return f"CONFIG|{device}|BRIGHT|{params['brightness']}"
+            if action in ["on", "turn_on"]:
+                arduino_json["action"] = "on"
+                if "brightness" in params:
+                    arduino_json["value"] = params["brightness"]
+                else:
+                    arduino_json["value"] = 100
+            elif action in ["off", "turn_off"]:
+                arduino_json["action"] = "off"
+                arduino_json["value"] = 0
+            elif action == "toggle":
+                # toggle需要Arduino支持或转换为on/off
+                arduino_json["action"] = "toggle"
         
-        return f"UNKNOWN|{device}|{action}"
+        elif cmd_type == "query":
+            arduino_json["action"] = "query"
+        
+        elif cmd_type == "config" and action == "set":
+            if "brightness" in params:
+                arduino_json["action"] = "set"
+                arduino_json["value"] = params["brightness"]
+        
+        return json.dumps(arduino_json)
+    
     
     def run(self):
         """主循环"""

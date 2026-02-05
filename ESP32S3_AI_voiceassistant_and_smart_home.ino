@@ -625,6 +625,9 @@ SmartHomeExecutor homeExecutor;
 void setup(){
     Serial.begin(115200);
     delay(1000);
+     if (homeExecutor.checkConnection()) {
+    Serial.println("智能家居系统就绪");
+}
 
     pinMode(key, INPUT_PULLUP);
     pinMode(key_smart, INPUT_PULLUP);
