@@ -35,7 +35,7 @@ void setup() {
         }
     }
     
-    Serial.println("🤖 Arduino智能家居控制器就绪");
+    Serial.println("Arduino智能家居控制器就绪");
     Serial.println("等待ESP32指令...");
 }
 
@@ -135,7 +135,7 @@ String executeCommand(const String& jsonStr) {
                ",\"isPWM\":" + String(targetDevice->isPWM ? "true" : "false") + "}";
     }
     else if (action == "toggle") {
-        // 🔄 TOGGLE功能（预留）
+        // TOGGLE功能（预留）
         // 根据当前状态切换
         if (targetDevice->isPWM) {
             if (targetDevice->currentState == 0) {
