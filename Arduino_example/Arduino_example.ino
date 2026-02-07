@@ -11,10 +11,10 @@ struct Device {
 };
 
 Device devices[] = {
-    {"living_room_light", 3, true, 0, 50},
+    {"living_room_light", 3, true, 0, 50},//50的意思是PWM数值默认设置为50%
     {"bedroom_light", 5, true, 0, 50},
     {"kitchen_light", 6, false, 0, 0},     // 改为开关
-    {"fan", 9, true, 0, 50},
+    {"fan", 9, true, 0, 50},                //如果有风扇，预留了PWM数值50%
     {"ac", 10, false, 0, 0},               // 改为"ac"
     {"tv", 11, false, 0, 0},
     {"outlet_1", 12, false, 0, 0},
