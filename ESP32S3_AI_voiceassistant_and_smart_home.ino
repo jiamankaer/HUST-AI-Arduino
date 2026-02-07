@@ -243,15 +243,17 @@ private:
     };
     
     // 设备映射表（仅供解析和验证使用）
-    DeviceConfig devices[7] = {
+    DeviceConfig devices[8] = {
         {"living_room_light", "light", true, 0},
         {"bedroom_light", "light", true, 0},
         {"kitchen_light", "light", false, 0},
+        {"fan", "fan", true, 0},           // 添加风扇
+        {"ac", "ac", false, 0},            // 改为"ac"
+        {"tv", "tv", false, 0},            // 添加电视
         {"outlet_1", "outlet", false, 0},
-        {"outlet_2", "outlet", false, 0},
-        {"curtain", "curtain", true, 0},
-        {"ac_control", "ac", false, 0}
-    };
+        {"outlet_2", "outlet", false, 0}
+    // 暂时移除窗帘，或添加"curtain"
+};
     
     // 转发指令的标记
     const String FORWARD_PREFIX = "CMD:";  // Python脚本识别的指令前缀

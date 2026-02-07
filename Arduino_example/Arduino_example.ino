@@ -11,14 +11,14 @@ struct Device {
 };
 
 Device devices[] = {
-    {"living_room_light", 3, true, 0, 50},    // PWM引脚，默认亮度50%
+    {"living_room_light", 3, true, 0, 50},
     {"bedroom_light", 5, true, 0, 50},
-    {"kitchen_light", 6, true, 0, 50},
-    {"fan", 9, true, 0, 50},                  // PWM控制风速
-    {"ac_power", 10, false, 0, 0},            // 数字开关
-    {"tv_power", 11, false, 0, 0},
+    {"kitchen_light", 6, false, 0, 0},     // 改为开关
+    {"fan", 9, true, 0, 50},
+    {"ac", 10, false, 0, 0},               // 改为"ac"
+    {"tv", 11, false, 0, 0},
     {"outlet_1", 12, false, 0, 0},
-    {"outlet_2", 13, false, 0}
+    {"outlet_2", 13, false, 0, 0}
 };
 
 void setup() {
@@ -35,7 +35,7 @@ void setup() {
         }
     }
     
-    Serial.println("Arduino智能家居控制器就绪");
+    Serial.println("🤖 Arduino智能家居控制器就绪");
     Serial.println("等待ESP32指令...");
 }
 
@@ -135,7 +135,7 @@ String executeCommand(const String& jsonStr) {
                ",\"isPWM\":" + String(targetDevice->isPWM ? "true" : "false") + "}";
     }
     else if (action == "toggle") {
-        // TOGGLE功能（预留）
+        // 🔄 TOGGLE功能（预留）
         // 根据当前状态切换
         if (targetDevice->isPWM) {
             if (targetDevice->currentState == 0) {
