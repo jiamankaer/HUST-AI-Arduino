@@ -6,12 +6,12 @@ import json
 class LaptopRelay:
     def __init__(self):
         # ESP32的串口（连接到笔记本电脑）
-        self.esp32_port = 'COM3'  # Windows
+        self.esp32_port = 'COM4'  # Windows
         # 或 '/dev/ttyUSB0'  # Linux/Mac
         self.esp32_baud = 115200
         
         # Arduino的串口
-        self.arduino_port = 'COM6'  # Windows
+        self.arduino_port = 'COM3'  # Windows
         # 或 '/dev/ttyUSB1'  # Linux/Mac
         self.arduino_baud = 9600
         
