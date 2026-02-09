@@ -818,7 +818,7 @@ String get_GPT_answer(String llm_inputText) {
     http_llm.addHeader("Content-Type", "application/json");
     http_llm.addHeader("Authorization", String(apikey));
 
-    String payload_LLM = "{\"model\":\"qwen-turbo\",\"input\":{\"messages\":[{\"role\": \"system\",\"content\": \"要求下面的回答严格控制在256字符以内\"},{\"role\": \"user\",\"content\": \"" + llm_inputText + "\"}]}}";
+    String payload_LLM = "{\"model\":\"qwen-turbo-latest\",\"input\":{\"messages\":[{\"role\":\"system\",\"content\":\"要求下面的回答严格控制在256字符以内\"},{\"role\":\"user\",\"content\":\"" + llm_inputText + "\"}]},\"parameters\":{\"enable_search\":true}}";
     
     int httpResponseCode = http_llm.POST(payload_LLM);
 
