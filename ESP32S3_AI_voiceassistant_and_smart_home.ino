@@ -184,8 +184,21 @@ void setup_speaker_pins() {
     }
 }
 
+void resetRecordingState() {
+    record_complete = 0;
+    start_record = 0;
+    adc_data_len = 0;
+    
+    // 动态缓冲区清理 - 必须检查指针有效性
+    if (sampleBuffer != NULL) {
+        // 清理整个缓冲区（最安全）
+        memset(sampleBuffer, 0, sample_buffer_size * sizeof(signed short));
+    }
+}
+
 //分离录音和语音识别模块避免重复
 String recordAndRecognizeSpeech(){
+    resetRecordingState();
     start_record = 1;
     unsigned long timeout = recordTimesSeconds * 1000 + 3000; // 录音时间 + 3秒缓冲
     unsigned long startTime = millis();
@@ -200,11 +213,10 @@ String recordAndRecognizeSpeech(){
             I2S.end();// 重置I2S以防硬件状态异常
             delay(100);
             setup_mic_pins();
+            resetRecordingState();
             return ""; // 返回空字符串表示失败
         }
     }
-    record_complete = 0;
-    start_record = 0;
 
     memset(data_json, '\0', data_json_len * sizeof(char));
     strcat(data_json,"{");
@@ -720,11 +732,15 @@ void loop() {
 
             //Change I2S pins setup from MIC to speaker
             I2S.end(); 
+            delay(200);
             setup_speaker_pins();
+            delay(50);
             get_voice_answer(LLM_answer);
 
             I2S.end();
+            delay(200);
             setup_mic_pins();
+            delay(100);
             Serial.println("\nPress the button to talk to me.");
             return;
 
@@ -818,7 +834,7 @@ String get_GPT_answer(String llm_inputText) {
     http_llm.addHeader("Content-Type", "application/json");
     http_llm.addHeader("Authorization", String(apikey));
 
-    String payload_LLM = "{\"model\":\"qwen-turbo-latest\",\"input\":{\"messages\":[{\"role\":\"system\",\"content\":\"要求下面的回答严格控制在256字符以内\"},{\"role\":\"user\",\"content\":\"" + llm_inputText + "\"}]},\"parameters\":{\"enable_search\":true}}";
+    String payload_LLM = "{\"model\":\"qwen-turbo-latest\",\"input\":{\"messages\":[{\"role\":\"system\",\"content\":\"要求下面的回答严格控制在256字符以内。如果用户输入内容为NULL或空，请直接返回：未听到说话内容，请重新输入。如果可能，尝试增大说话音量或靠近麦克风\"},{\"role\":\"user\",\"content\":\"" + llm_inputText + "\"}]},\"parameters\":{\"enable_search\":true}}";
     
     int httpResponseCode = http_llm.POST(payload_LLM);
 
@@ -877,6 +893,7 @@ String get_GPT_answer_smart_home(String llm_inputText) {
     String payload_LLM = "{";
     payload_LLM += "\"model\":\"qwen-turbo\",";
     payload_LLM += "\"input\":{\"messages\":[";
+
     
     // 系统指令 - 强制JSON输出格式
     payload_LLM += "{\"role\": \"system\", \"content\": \"";
@@ -894,6 +911,7 @@ String get_GPT_answer_smart_home(String llm_inputText) {
     payload_LLM += "示例2 - 查询温度: {\\\"command\\\":\\\"query\\\",\\\"device\\\":\\\"ac\\\",\\\"action\\\":\\\"status\\\",\\\"response\\\":\\\"当前温度26度\\\"}\\n";
     payload_LLM += "示例3 - 调光: {\\\"command\\\":\\\"config\\\",\\\"device\\\":\\\"light\\\",\\\"action\\\":\\\"set\\\",\\\"params\\\":{\\\"brightness\\\":70},\\\"response\\\":\\\"亮度调到70%\\\"}\\n";
     payload_LLM += "重要：仅返回JSON，无其他任何文本。如果无法理解指令，返回: {\\\"error\\\":\\\"无法理解指令\\\",\\\"response\\\":\\\"请再说一遍\\\"}";
+    payload_LLM += "特殊处理：如果用户输入为空或无法识别，返回: {\\\"error\\\":\\\"未听到说话内容\\\",\\\"response\\\":\\\"未听到说话内容，请重新输入。请增大说话音量或靠近麦克风\\\"}";
     payload_LLM += "\"},";
     
     // 用户指令
