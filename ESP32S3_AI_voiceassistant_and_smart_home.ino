@@ -43,25 +43,29 @@ const int sampleRate = 16000;  // sample rate in Hz
 i2s_data_bit_width_t bps = I2S_DATA_BIT_WIDTH_16BIT;
 i2s_slot_mode_t slot = I2S_SLOT_MODE_MONO;
 
-// MIC recording buffer
-static const uint32_t sample_buffer_size = 320000;
-signed short* sampleBuffer = NULL;
+// ========== MIC 录音缓冲区 ==========
+static const uint32_t sample_buffer_size = 320000;  // 缓冲区大小（字节），对应10秒@16kHz 16bit单声道
+signed short* sampleBuffer = NULL;                  // 实际分配指针（使用 ps_malloc）
 
-// STT JSON
+// ========== STT JSON 相关 ==========
 char *data_json;
 const int recordTimesSeconds = 10;
-const int adc_data_len = 16000 * recordTimesSeconds;
-const int data_json_len = adc_data_len * 2 * 1.4;
+const int max_audio_samples = 16000 * recordTimesSeconds;  // 最大录音样本数（160000）
+const int data_json_len = max_audio_samples * 2 * 1.4;     // JSON 缓冲区大小（足够容纳 Base64 编码）
 
+// ========== 录音状态控制 ==========
 static uint8_t start_record = 0;
 static uint8_t record_complete = 0;
+volatile size_t total_samples = 0;   // 已采集样本数（录音任务实时更新）
+volatile int actual_audio_len = 0;   // 本次录音实际样本数（用于 JSON）
 
-// HTTP audio file buffer
-const int AUDIO_FILE_BUFFER_SIZE  = 600000;
+// ========== HTTP 音频文件缓冲区（TTS） ==========
+const int AUDIO_FILE_BUFFER_SIZE = 600000;
 char* audio_file_buffer;
 
 const int Timeout = 10000;
 uint32_t audio_index = 0;
+const size_t I2S_CHUNK_BYTES = 1024;
 HTTPClient http_tts;
 
 // BAIDU TTS
@@ -187,36 +191,38 @@ void setup_speaker_pins() {
 void resetRecordingState() {
     record_complete = 0;
     start_record = 0;
-    adc_data_len = 0;
+    actual_audio_len = 0;
+    total_samples = 0;
     
     // 动态缓冲区清理 - 必须检查指针有效性
     if (sampleBuffer != NULL) {
         // 清理整个缓冲区（最安全）
-        memset(sampleBuffer, 0, sample_buffer_size * sizeof(signed short));
+        memset(sampleBuffer, 0, sample_buffer_size);
     }
 }
 
 //分离录音和语音识别模块避免重复
-String recordAndRecognizeSpeech(){
+String recordAndRecognizeSpeech(int buttonPin){
     resetRecordingState();
     start_record = 1;
-    unsigned long timeout = recordTimesSeconds * 1000 + 3000; // 录音时间 + 3秒缓冲
+
+    unsigned long timeout = recordTimesSeconds * 1000;
     unsigned long startTime = millis();
-    
-    while(record_complete != 1) {
+
+    // 等待按键松开或超时
+    while (digitalRead(buttonPin) == 0 && millis() - startTime < timeout) {
         delay(10);
-        if (millis() - startTime > timeout) {
-            Serial.println("录音超时!");
-            start_record = 0;
-            delay(50);// 等待一小段时间让录音任务有机会响应
-            record_complete = 0; // 强制重置录音完成标志，防止后续混乱
-            I2S.end();// 重置I2S以防硬件状态异常
-            delay(100);
-            setup_mic_pins();
-            resetRecordingState();
-            return ""; // 返回空字符串表示失败
-        }
     }
+
+    start_record = 0;
+    record_complete = 1;
+
+    // 如果超时，给出提示（可选）
+    if (millis() - startTime >= timeout) {
+        Serial.println("录音超时（10秒）");
+    }
+
+    actual_audio_len = total_samples;   // 需定义为全局变量
 
     memset(data_json, '\0', data_json_len * sizeof(char));
     strcat(data_json,"{");
@@ -228,9 +234,9 @@ String recordAndRecognizeSpeech(){
     strcat(data_json, "\"token\":\"");
     strcat(data_json, token.c_str());
     strcat(data_json,"\",");
-    sprintf(data_json + strlen(data_json), "\"len\":%d,", adc_data_len * 2);
+    sprintf(data_json + strlen(data_json), "\"len\":%d,", actual_audio_len * 2);
     strcat(data_json, "\"speech\":\"");
-    strcat(data_json, base64::encode((uint8_t *)sampleBuffer, adc_data_len * sizeof(uint16_t)).c_str());
+    strcat(data_json, base64::encode((uint8_t *)sampleBuffer, actual_audio_len * sizeof(uint16_t)).c_str());
     strcat(data_json, "\"");
     strcat(data_json, "}");
 
@@ -645,7 +651,7 @@ void setup(){
 
     pinMode(key, INPUT_PULLUP);
     pinMode(key_smart, INPUT_PULLUP);
-    sampleBuffer = (signed short*)ps_malloc(320000 * sizeof(signed short));
+    sampleBuffer = (signed short*)ps_malloc(sample_buffer_size);
     if (!sampleBuffer || !esp_ptr_external_ram(sampleBuffer)) {
         Serial.println("分配PSRAM失败!");
     }
@@ -715,7 +721,7 @@ void setup(){
     Serial.println("内存分配成功");
 
     // Create a new task for MIC data reading
-    xTaskCreate(capture_samples, "CaptureSamples", 1024 * 32, (void*)sample_buffer_size, 10, NULL);
+    xTaskCreate(capture_samples, "CaptureSamples", 1024 * 32, NULL, 10, NULL);
 
 }
 
@@ -726,7 +732,7 @@ void loop() {
         delay(30);
         if (digitalRead(key) == 0) {
             Serial.printf("Start recording\r\n");
-            String talk_question_AI = recordAndRecognizeSpeech();
+            String talk_question_AI = recordAndRecognizeSpeech(key);
             LLM_answer = get_GPT_answer(talk_question_AI);
             Serial.println("\nAnswer: " + LLM_answer);
 
@@ -750,7 +756,7 @@ void loop() {
         delay(30);
         if (digitalRead(key_smart) == 0) {
             Serial.printf("Start recording\r\n");
-            String talk_question_smart_home = recordAndRecognizeSpeech();
+            String talk_question_smart_home = recordAndRecognizeSpeech(key_smart);
             processVoiceCommand(talk_question_smart_home);
             return;
 
@@ -761,17 +767,21 @@ void loop() {
 
 
 static void capture_samples(void* arg) {
-
-    size_t bytes_read = 0;
-
+    size_t bytes_read;
     while (1) {
-        if (start_record == 1) {
-            I2S.readBytes((char*)sampleBuffer, sample_buffer_size);
-            record_complete = 1;
-            start_record = 0;
-        }
-        else {
-            delay(100);
+        if (start_record) {
+            size_t samples_remaining = max_audio_samples - total_samples;
+            if (samples_remaining == 0) {
+                start_record = 0;
+                record_complete = 1;
+                continue;
+            }
+            // 每次最多读 I2S_CHUNK_BYTES 字节，避免阻塞
+            size_t to_read = min(I2S_CHUNK_BYTES, samples_remaining * sizeof(int16_t));
+            bytes_read = I2S.readBytes((char*)(sampleBuffer + total_samples), to_read);
+            total_samples += bytes_read / sizeof(int16_t);
+        } else {
+            delay(10);
         }
     }
     vTaskDelete(NULL);
