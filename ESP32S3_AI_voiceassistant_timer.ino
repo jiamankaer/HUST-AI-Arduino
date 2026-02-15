@@ -7,11 +7,17 @@
 #include <UrlEncode.h>
 #include <esp32-hal-psram.h>
 
+
+#define UNIT_HOUR_LEN   2
+#define UNIT_MINUTE_LEN 2
+
 const uint8_t key = 3;    // Push key
 const uint8_t I2S_LRC = 4;    //ESP32 speaker pins setup
 const uint8_t I2S_BCLK = 5;
 const uint8_t I2S_DOUT = 6;  
 const uint8_t key_smart = 7;   //切换智能家居助手的按键
+const uint8_t key_timer = 8;      // 倒计时专用按键
+
 const uint8_t I2S_DIN = 41;   //ESP32 MIC pins setup
 const uint8_t I2S_SCK = 42; 
 
@@ -60,7 +66,7 @@ volatile size_t total_samples = 0;   // 已采集样本数（录音任务实时�
 volatile int actual_audio_len = 0;   // 本次录音实际样本数（用于 JSON）
 
 // ========== HTTP 音频文件缓冲区（TTS） ==========
-const int AUDIO_FILE_BUFFER_SIZE = 600000;
+const int AUDIO_FILE_BUFFER_SIZE = 2000000;
 char* audio_file_buffer;
 
 const int Timeout = 10000;
@@ -104,6 +110,7 @@ void get_voice_answer(String llm_answer) {
             
             Serial.println("The synthesis is successful, and the result is an audio file.");
 
+            audio_index = 0;
             memset(audio_file_buffer, 0, AUDIO_FILE_BUFFER_SIZE);
             
             int32_t wait_cnt = 0;
@@ -248,6 +255,89 @@ String recordAndRecognizeSpeech(int buttonPin){
     String talk_question = baidu_jsondoc["result"][0];
     Serial.println("Input: " + talk_question);    
     return talk_question;
+}
+
+long parse_duration(String text, int &hours, int &minutes, int &seconds) {
+    hours = 0; minutes = 0; seconds = 0;
+    int hPos = text.indexOf("小时");
+    int mPos = text.indexOf("分钟");
+    int sPos = text.indexOf("秒");
+
+    if (hPos >= 0) {
+        String hStr = text.substring(0, hPos);
+        hours = hStr.toInt();
+    }
+    if (mPos >= 0) {
+        int start = (hPos >= 0) ? hPos + UNIT_HOUR_LEN : 0;
+        String mStr = text.substring(start, mPos);
+        minutes = mStr.toInt();
+    }
+    if (sPos >= 0) {
+        int start = 0;
+        if (mPos >= 0) {
+            start = mPos + UNIT_MINUTE_LEN;
+        } else if (hPos >= 0) {
+            start = hPos + UNIT_HOUR_LEN;
+        }
+        String sStr = text.substring(start, sPos);
+        seconds = sStr.toInt();
+    }
+
+    if (hours == 0 && minutes == 0 && seconds == 0) return -1;
+    long total = hours * 3600L + minutes * 60L + seconds;
+    if (total > 86400L) return -1;
+    return total;
+}
+
+void setup_timer_by_voice() {
+    Serial.println("进入倒计时设置模式");
+
+    // 播报提示语
+    I2S.end();
+    delay(200);
+    setup_speaker_pins();
+    get_voice_answer("请说出倒计时时长，比如五分钟或三十秒");
+    I2S.end();
+    delay(200);
+    setup_mic_pins();
+    delay(100);
+
+    String recognized_text = recordAndRecognizeSpeech(key_timer);
+    String Formatted_time_data = get_GPT_handle_result(recognized_text);
+
+    int h, m, s;   // 声明变量用于接收解析出的分量
+    long total_seconds = parse_duration(Formatted_time_data, h, m, s);
+
+    if (total_seconds > 0 && total_seconds < 86400) {
+        // 通过串口发送总秒数
+        Serial.println("RAW:TIMER " + String(total_seconds));
+        Serial.printf("[倒计时] 已发送 %ld 秒\n", total_seconds);
+
+        // 构建播报字符串（直接使用解析出的 h,m,s）
+        String confirm = "好的，";
+        if (h > 0) confirm += String(h) + "小时";
+        if (m > 0) confirm += String(m) + "分钟";
+        if (s > 0) confirm += String(s) + "秒";
+        confirm += "倒计时开始";
+
+        // 播报
+        I2S.end();
+        delay(200);
+        setup_speaker_pins();
+        get_voice_answer(confirm);
+        I2S.end();
+        delay(200);
+        setup_mic_pins();
+    } else {
+        // 解析失败
+        I2S.end();
+        delay(200);
+        setup_speaker_pins();
+        get_voice_answer("抱歉，我没听清时长，请重试");
+        I2S.end();
+        delay(200);
+        setup_mic_pins();
+    }
 }
 
 class SmartHomeExecutor {
@@ -651,6 +741,7 @@ void setup(){
 
     pinMode(key, INPUT_PULLUP);
     pinMode(key_smart, INPUT_PULLUP);
+    pinMode(key_timer, INPUT_PULLUP);
     sampleBuffer = (signed short*)ps_malloc(sample_buffer_size);
     if (!sampleBuffer || !esp_ptr_external_ram(sampleBuffer)) {
         Serial.println("分配PSRAM失败!");
@@ -763,6 +854,17 @@ void loop() {
         }
     }    
     delay(1);
+
+    // 倒计时专用按键
+    if (digitalRead(key_timer) == 0) {
+        delay(30);
+        if (digitalRead(key_timer) == 0) {
+            setup_timer_by_voice();   // 调用倒计时处理函数
+            return;
+        }
+    }
+
+    delay(1);
 }
 
 
@@ -844,7 +946,25 @@ String get_GPT_answer(String llm_inputText) {
     http_llm.addHeader("Content-Type", "application/json");
     http_llm.addHeader("Authorization", String(apikey));
 
-    String payload_LLM = "{\"model\":\"qwen-turbo-latest\",\"input\":{\"messages\":[{\"role\":\"system\",\"content\":\"要求下面的回答严格控制在256字符以内。如果用户输入内容为NULL或空，请直接返回：未听到说话内容，请重新输入。如果可能，尝试增大说话音量或靠近麦克风\"},{\"role\":\"user\",\"content\":\"" + llm_inputText + "\"}]},\"parameters\":{\"enable_search\":true}}";
+String payload_LLM = 
+  "{"
+    "\"model\": \"qwen-turbo-latest\","
+    "\"input\": {"
+      "\"messages\": ["
+        "{"
+          "\"role\": \"system\","
+          "\"content\": \"请严格遵守以下规则：\\n1. 所有回答必须控制在256字符以内。\\n2. 如果用户输入内容为空（NULL或空字符串），请直接返回：“未听到说话内容，请重新输入。如果可能，尝试增大说话音量或靠近麦克风”。\\n3. 当用户的问题可能需要地理信息才能准确回答（例如：天气、附近地点、本地新闻、地区政策、风土人情等）时：\\n   - 如果用户问题中明确包含了城市、地区名称（如“北京”、“浦东”、“曼哈顿”），则正常回答。\\n   - 如果用户问题中没有明确的地理名称，且无法从上下文推断用户所在地理区域，则**必须**只返回以下固定提示，不得猜测任何地点，也不得列出多个地点的信息：\\n     “请补充您所在的区域，以便我提供更详细、准确的信息。”\""
+        "},"
+        "{"
+          "\"role\": \"user\","
+          "\"content\": \"" + llm_inputText + "\""
+        "}"
+      "]"
+    "},"
+    "\"parameters\": {"
+      "\"enable_search\": true"
+    "}"
+  "}";
     
     int httpResponseCode = http_llm.POST(payload_LLM);
 
@@ -987,5 +1107,53 @@ void processVoiceCommand(String userSpeech) {
     } else {
         // 错误处理
         Serial.println("错误: " + doc["error"].as<String>());
+    }
+}
+
+String get_GPT_handle_result(String llm_inputText) {
+    HTTPClient http_llm;
+
+    http_llm.setTimeout(Timeout);
+    http_llm.begin(apiUrl);
+
+    http_llm.addHeader("Content-Type", "application/json");
+    http_llm.addHeader("Authorization", String(apikey));
+
+    String payload_LLM = 
+  "{"
+    "\"model\": \"qwen-turbo\","
+    "\"input\": {"
+      "\"messages\": ["
+        "{"
+          "\"role\": \"system\","
+          "\"content\": \"你是一个格式化输出时间的智能助手。请严格遵守以下规则：\\n1. 当用户输入关于倒计时时间设置的内容时，你必须仅输出格式为\\\"X小时Y分钟Z秒\\\"的回答，其中X、Y、Z只能填写阿拉伯数字（0-9，可多位）。例如：\\n   - 用户输入“5分钟”，你应返回“0小时5分钟0秒”\\n   - 用户输入“2小时30秒”，你应返回“2小时0分钟30秒”\\n   - 用户输入“10分钟20秒”，你应返回“0小时10分钟20秒”\\n2. 如果用户输入的内容中不包含任何倒计时时间设置的信息，或者你无法理解指令，则必须仅返回\\\"抱歉，我没听清时长，请重试\\\"。例如：\\n   - 用户输入“倒计时”，你应返回“抱歉，我没听清时长，请重试”\\n   - 用户输入“你好”，你应返回“抱歉，我没听清时长，请重试”\""
+        "},"
+        "{"
+          "\"role\": \"user\","
+          "\"content\": \"" + llm_inputText + "\""
+        "}"
+      "]"
+    "}"
+  "}";
+    
+    int httpResponseCode = http_llm.POST(payload_LLM);
+
+    if (httpResponseCode == 200) {
+        String response = http_llm.getString();
+        http_llm.end();
+        Serial.println(response);
+
+        // Parse JSON response
+        DynamicJsonDocument jsonDoc(1024);
+        deserializeJson(jsonDoc, response);
+        String outputText = jsonDoc["output"]["text"];
+
+        return outputText;
+    
+    } 
+    else {
+        http_llm.end();
+        Serial.printf("Error %i \n", httpResponseCode);
+        return "<error>";
     }
 }
