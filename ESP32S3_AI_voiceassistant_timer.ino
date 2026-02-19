@@ -8,8 +8,8 @@
 #include <esp32-hal-psram.h>
 
 
-#define UNIT_HOUR_LEN   2
-#define UNIT_MINUTE_LEN 2
+#define UNIT_HOUR_LEN   strlen("小时")   // 结果为 6
+#define UNIT_MINUTE_LEN strlen("分钟")   // 结果为 6
 
 const uint8_t key = 3;    // Push key
 const uint8_t I2S_LRC = 4;    //ESP32 speaker pins setup
@@ -290,9 +290,7 @@ long parse_duration(String text, int &hours, int &minutes, int &seconds) {
 }
 
 void setup_timer_by_voice() {
-    Serial.println("进入倒计时设置模式");
-
-    // 播报提示语
+    // 1. 播报提示
     I2S.end();
     delay(200);
     setup_speaker_pins();
@@ -300,27 +298,39 @@ void setup_timer_by_voice() {
     I2S.end();
     delay(200);
     setup_mic_pins();
-    delay(100);
+    delay(100)
+
+    // 2. 判断提示结束时按键状态
+    bool key_held = (digitalRead(key_timer) == 0);
+
+    if (!key_held) {
+        // 按键已释放：等待用户再次按下（超时10秒）
+        unsigned long start = millis();
+        while (digitalRead(key_timer) != 0) {
+            if (millis() - start > 10000) {          // 10秒超时
+                // 超时退出
+                return;
+            }
+            delay(10);
+        }
+        delay(30); 
+    } else {
+        delay(30);
+    }
 
     String recognized_text = recordAndRecognizeSpeech(key_timer);
     String Formatted_time_data = get_GPT_handle_result(recognized_text);
 
-    int h, m, s;   // 声明变量用于接收解析出的分量
+    int h, m, s;
     long total_seconds = parse_duration(Formatted_time_data, h, m, s);
 
     if (total_seconds > 0 && total_seconds < 86400) {
-        // 通过串口发送总秒数
-        Serial.println("RAW:TIMER " + String(total_seconds));
-        Serial.printf("[倒计时] 已发送 %ld 秒\n", total_seconds);
-
-        // 构建播报字符串（直接使用解析出的 h,m,s）
         String confirm = "好的，";
         if (h > 0) confirm += String(h) + "小时";
         if (m > 0) confirm += String(m) + "分钟";
         if (s > 0) confirm += String(s) + "秒";
         confirm += "倒计时开始";
 
-        // 播报
         I2S.end();
         delay(200);
         setup_speaker_pins();
@@ -329,7 +339,6 @@ void setup_timer_by_voice() {
         delay(200);
         setup_mic_pins();
     } else {
-        // 解析失败
         I2S.end();
         delay(200);
         setup_speaker_pins();
