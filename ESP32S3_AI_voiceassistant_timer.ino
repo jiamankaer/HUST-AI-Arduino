@@ -291,6 +291,9 @@ long parse_duration(String text, int &hours, int &minutes, int &seconds) {
 
 void setup_timer_by_voice() {
     // 1. 播报提示
+    Serial.println("进入倒计时设置模式");
+
+    // 播报提示语
     I2S.end();
     delay(200);
     setup_speaker_pins();
@@ -298,33 +301,69 @@ void setup_timer_by_voice() {
     I2S.end();
     delay(200);
     setup_mic_pins();
-    delay(100)
 
-    // 2. 判断提示结束时按键状态
-    bool key_held = (digitalRead(key_timer) == 0);
-
-    if (!key_held) {
-        // 按键已释放：等待用户再次按下（超时10秒）
-        unsigned long start = millis();
-        while (digitalRead(key_timer) != 0) {
-            if (millis() - start > 10000) {          // 10秒超时
-                // 超时退出
-                return;
-            }
-            delay(10);
-        }
-        delay(30); 
-    } else {
-        delay(30);
+    // 固定录制 3 秒音频（可根据需要调整时长）
+    const int recordDuration = 3; // 秒
+    Serial.printf("开始录音 %d 秒...\n", recordDuration);
+    
+    // 重置录音状态并开始录音
+    resetRecordingState();
+    start_record = 1;
+    delay(recordDuration * 1000);
+    start_record = 0;
+    record_complete = 1;
+    
+    actual_audio_len = total_samples;
+    Serial.print("实际采集样本数: ");
+    Serial.println(actual_audio_len);
+    
+    // 如果未采集到数据，提示错误并返回
+    if (actual_audio_len == 0) {
+        Serial.println("错误：未采集到音频数据");
+        I2S.end();
+        delay(200);
+        setup_speaker_pins();
+        get_voice_answer("录音失败，请检查麦克风");
+        I2S.end();
+        delay(200);
+        setup_mic_pins();
+        return;
     }
+    
+    // 构造 STT 请求（与 recordAndRecognizeSpeech 中相同）
+    memset(data_json, '\0', data_json_len * sizeof(char));
+    strcat(data_json,"{");
+    strcat(data_json,"\"format\":\"pcm\",");
+    strcat(data_json,"\"rate\":16000,");
+    strcat(data_json,"\"dev_pid\":1537,");
+    strcat(data_json,"\"channel\":1,");
+    strcat(data_json,"\"cuid\":\"121971725\",");
+    strcat(data_json, "\"token\":\"");
+    strcat(data_json, token.c_str());
+    strcat(data_json,"\",");
+    sprintf(data_json + strlen(data_json), "\"len\":%d,", actual_audio_len * 2);
+    strcat(data_json, "\"speech\":\"");
+    strcat(data_json, base64::encode((uint8_t *)sampleBuffer, actual_audio_len * sizeof(uint16_t)).c_str());
+    strcat(data_json, "\"");
+    strcat(data_json, "}");
 
-    String recognized_text = recordAndRecognizeSpeech(key_timer);
+    String baidu_response = send_to_stt();
+    Serial.println("Recognition complete");
+
+    DynamicJsonDocument baidu_jsondoc(1024);
+    deserializeJson(baidu_jsondoc, baidu_response);
+    String recognized_text = baidu_jsondoc["result"][0];
+    Serial.println("识别结果: " + recognized_text);
+
     String Formatted_time_data = get_GPT_handle_result(recognized_text);
 
     int h, m, s;
     long total_seconds = parse_duration(Formatted_time_data, h, m, s);
 
     if (total_seconds > 0 && total_seconds < 86400) {
+        // 通过串口发送倒计时指令给笔记本电脑（中转）
+        Serial.println("RAW:TIMER " + String(total_seconds));
+        Serial.printf("[倒计时] 已发送 %d 秒\n", total_seconds);
         String confirm = "好的，";
         if (h > 0) confirm += String(h) + "小时";
         if (m > 0) confirm += String(m) + "分钟";
